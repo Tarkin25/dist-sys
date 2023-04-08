@@ -26,7 +26,7 @@ impl Node for Echo {
         &mut self.current_id
     }
 
-    fn node_id(&mut self) -> &mut Option<String> {
+    fn node_id_mut(&mut self) -> &mut Option<String> {
         &mut self.node_id
     }
 }

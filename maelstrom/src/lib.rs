@@ -34,12 +34,18 @@ pub enum Payload {
     EchoOk {
         echo: String,
     },
+    Generate,
+    GenerateOk { id: String }
 }
 
 pub trait Node {
     fn handle(&mut self, message: Message) -> anyhow::Result<Vec<Payload>>;
 
-    fn node_id(&mut self) -> &mut Option<String>;
+    fn node_id_mut(&mut self) -> &mut Option<String>;
+
+    fn node_id(&mut self) -> anyhow::Result<&str> {
+        Ok(self.node_id_mut().as_ref().ok_or(anyhow!("self.node_id is not initialized"))?)
+    }
 
     fn current_id(&mut self) -> &mut usize;
 
@@ -64,7 +70,7 @@ trait NodeInternal: Node {
         let in_reply_to = message.body.id.clone();
 
         let payloads = if let Payload::Init { node_id, .. } = message.body.payload {
-            *self.node_id() = Some(node_id);
+            *self.node_id_mut() = Some(node_id);
             vec![Payload::InitOk]
         } else {
             self.handle(message)
@@ -73,11 +79,7 @@ trait NodeInternal: Node {
 
         for payload in payloads {
             let message = Message {
-                src: self
-                    .node_id()
-                    .as_ref()
-                    .map(|s| s.clone())
-                    .ok_or(anyhow!("self.node_id is not initialized"))?,
+                src: self.node_id()?.to_string(),
                 dst: dst.clone(),
                 body: Body {
                     id: Some(self.next_id()),
