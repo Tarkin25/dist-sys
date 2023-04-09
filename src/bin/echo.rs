@@ -1,4 +1,4 @@
-use maelstrom::{Message, Node, Payload};
+use dist_sys::{Message, Node, Payload};
 
 struct Echo {
     current_id: usize,

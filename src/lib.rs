@@ -35,7 +35,9 @@ pub enum Payload {
         echo: String,
     },
     Generate,
-    GenerateOk { id: String }
+    GenerateOk {
+        id: String,
+    },
 }
 
 pub trait Node {
@@ -44,7 +46,10 @@ pub trait Node {
     fn node_id_mut(&mut self) -> &mut Option<String>;
 
     fn node_id(&mut self) -> anyhow::Result<&str> {
-        Ok(self.node_id_mut().as_ref().ok_or(anyhow!("self.node_id is not initialized"))?)
+        Ok(self
+            .node_id_mut()
+            .as_ref()
+            .ok_or(anyhow!("self.node_id is not initialized"))?)
     }
 
     fn current_id(&mut self) -> &mut usize;

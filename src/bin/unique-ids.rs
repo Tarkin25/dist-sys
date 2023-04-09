@@ -1,4 +1,4 @@
-use maelstrom::{Message, Node, Payload};
+use dist_sys::{Message, Node, Payload};
 
 struct UniqueIds {
     current_id: usize,
