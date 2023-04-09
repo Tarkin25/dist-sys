@@ -1,36 +1,35 @@
-use dist_sys::{Message, Node, Payload};
+use dist_sys::*;
+use serde::{Deserialize, Serialize};
 
-struct Echo {
-    current_id: usize,
-    node_id: Option<String>,
+struct Echo;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+#[serde(rename_all = "snake_case")]
+enum Payload {
+    Init(Init),
+    InitOk,
+    Echo { echo: String },
+    EchoOk { echo: String },
 }
 
-impl Echo {
-    pub fn new() -> Self {
-        Self {
-            current_id: 1,
-            node_id: None,
-        }
-    }
-}
-
-impl Node for Echo {
-    fn handle(&mut self, message: Message) -> anyhow::Result<Vec<Payload>> {
+impl Handle<Payload> for Echo {
+    fn handle<'a, 'b, 'c>(
+        &mut self,
+        message: Message<Payload>,
+        mut context: MessageContext<'a, 'b, 'c>,
+    ) -> anyhow::Result<()> {
         match message.body.payload {
-            Payload::Echo { echo } => Ok(vec![Payload::EchoOk { echo }]),
-            _ => Ok(Vec::new()),
+            Payload::Init(init) => {
+                context.initialize(init);
+                context.reply(Payload::InitOk)
+            }
+            Payload::Echo { echo } => context.reply(Payload::EchoOk { echo }),
+            _ => Ok(()),
         }
-    }
-
-    fn current_id(&mut self) -> &mut usize {
-        &mut self.current_id
-    }
-
-    fn node_id_mut(&mut self) -> &mut Option<String> {
-        &mut self.node_id
     }
 }
 
 fn main() -> anyhow::Result<()> {
-    Echo::new().run()
+    Echo.run()
 }

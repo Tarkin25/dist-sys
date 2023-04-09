@@ -1,40 +1,38 @@
-use dist_sys::{Message, Node, Payload};
+use dist_sys::*;
+use serde::{Deserialize, Serialize};
 
-struct UniqueIds {
-    current_id: usize,
-    node_id: Option<String>,
+struct UniqueIds;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+#[serde(rename_all = "snake_case")]
+enum Payload {
+    Init(Init),
+    InitOk,
+    Generate,
+    GenerateOk { id: String },
 }
 
-impl UniqueIds {
-    pub fn new() -> Self {
-        Self {
-            current_id: 1,
-            node_id: None,
-        }
-    }
-}
-
-impl Node for UniqueIds {
-    fn current_id(&mut self) -> &mut usize {
-        &mut self.current_id
-    }
-
-    fn node_id_mut(&mut self) -> &mut Option<String> {
-        &mut self.node_id
-    }
-
-    fn handle(&mut self, message: Message) -> anyhow::Result<Vec<Payload>> {
-        if let Payload::Generate = message.body.payload {
-            let current_id = self.current_id;
-            let id = format!("{}-{}", self.node_id()?, current_id);
-
-            Ok(vec![Payload::GenerateOk { id }])
-        } else {
-            Ok(Vec::new())
+impl Handle<Payload> for UniqueIds {
+    fn handle<'a, 'b, 'c>(
+            &mut self,
+            message: Message<Payload>,
+            mut context: MessageContext<'a, 'b, 'c>,
+        ) -> anyhow::Result<()> {
+        match message.body.payload {
+            Payload::Init(init) => {
+                context.initialize(init);
+                context.reply(Payload::InitOk)
+            },
+            Payload::Generate => {
+                let id = format!("{}-{}", &context.init()?.node_id, context.message_id());
+                context.reply(Payload::GenerateOk { id })
+            },
+            _ => Ok(())
         }
     }
 }
 
 fn main() -> anyhow::Result<()> {
-    UniqueIds::new().run()
+    UniqueIds.run()
 }
