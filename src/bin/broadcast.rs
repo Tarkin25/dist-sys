@@ -1,7 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+use anyhow::anyhow;
 use dist_sys::*;
 use serde::{Deserialize, Serialize};
+
+type Topology = HashMap<String, Vec<String>>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -9,24 +12,26 @@ use serde::{Deserialize, Serialize};
 enum Payload {
     Init(Init),
     InitOk,
-    Broadcast {
-        message: usize,
-    },
+    Broadcast { message: usize },
     BroadcastOk,
     Read,
-    ReadOk {
-        messages: Vec<usize>,
-    },
-    Topology {
-        topology: HashMap<String, Vec<String>>,
-    },
+    ReadOk { messages: Vec<usize> },
+    Topology { topology: Topology },
     TopologyOk,
 }
 
 #[derive(Default)]
 struct Broadcast {
-    topology: Option<HashMap<String, Vec<String>>>,
-    read_messages: Vec<usize>,
+    topology: Option<Topology>,
+    read_messages: HashSet<usize>,
+}
+
+impl Broadcast {
+    fn topology(&self) -> anyhow::Result<&Topology> {
+        self.topology
+            .as_ref()
+            .ok_or(anyhow!("Topology is not initialized"))
+    }
 }
 
 impl Handle<Payload> for Broadcast {
@@ -44,12 +49,30 @@ impl Handle<Payload> for Broadcast {
                 self.topology = Some(topology);
                 context.reply(Payload::TopologyOk)
             }
-            Payload::Broadcast { message } => {
-                self.read_messages.push(message);
+            Payload::Broadcast {
+                message: message_number,
+            } => {
+                self.read_messages.insert(message_number);
+                let topology = self.topology()?;
+                let node_id = &context.init()?.node_id;
+                let neighbors = &topology[node_id];
+
+                for neighbor in neighbors
+                    .into_iter()
+                    .filter(|neighbor| *neighbor != &message.src)
+                {
+                    context.send(
+                        neighbor.clone(),
+                        Payload::Broadcast {
+                            message: message_number,
+                        },
+                    )?;
+                }
+
                 context.reply(Payload::BroadcastOk)
             }
             Payload::Read => context.reply(Payload::ReadOk {
-                messages: self.read_messages.clone(),
+                messages: self.read_messages.clone().into_iter().collect(),
             }),
             _ => Ok(()),
         }
