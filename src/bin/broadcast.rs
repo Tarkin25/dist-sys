@@ -23,15 +23,10 @@ enum Payload {
 #[derive(Default)]
 struct Broadcast {
     topology: Option<Topology>,
-    read_messages: HashSet<usize>,
-}
-
-impl Broadcast {
-    fn topology(&self) -> anyhow::Result<&Topology> {
-        self.topology
-            .as_ref()
-            .ok_or(anyhow!("Topology is not initialized"))
-    }
+    /// key: message value
+    /// <br/>
+    /// value: set containing all neighboring nodes the message has already been broadcasted to
+    messages: HashMap<usize, HashSet<String>>,
 }
 
 impl Handle<Payload> for Broadcast {
@@ -52,27 +47,32 @@ impl Handle<Payload> for Broadcast {
             Payload::Broadcast {
                 message: message_number,
             } => {
-                self.read_messages.insert(message_number);
-                let topology = self.topology()?;
+                let notified_neighbors = self.messages.entry(message_number).or_default();
+                let topology = self
+                    .topology
+                    .as_ref()
+                    .ok_or(anyhow!("topology not initialized"))?;
                 let node_id = &context.init()?.node_id;
                 let neighbors = &topology[node_id];
 
-                for neighbor in neighbors
-                    .into_iter()
-                    .filter(|neighbor| *neighbor != &message.src)
-                {
-                    context.send(
-                        neighbor.clone(),
-                        Payload::Broadcast {
-                            message: message_number,
-                        },
-                    )?;
+                notified_neighbors.insert(message.src.clone());
+
+                for neighbor in neighbors {
+                    if !notified_neighbors.contains(neighbor) {
+                        context.send(
+                            neighbor.clone(),
+                            Payload::Broadcast {
+                                message: message_number,
+                            },
+                        )?;
+                        notified_neighbors.insert(neighbor.clone());
+                    }
                 }
 
                 context.reply(Payload::BroadcastOk)
             }
             Payload::Read => context.reply(Payload::ReadOk {
-                messages: self.read_messages.clone().into_iter().collect(),
+                messages: self.messages.keys().copied().collect(),
             }),
             _ => Ok(()),
         }
