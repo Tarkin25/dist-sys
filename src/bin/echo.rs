@@ -17,7 +17,7 @@ impl Handle<Payload> for Echo {
     fn handle<'a, 'b, 'c>(
         &mut self,
         message: Message<Payload>,
-        mut context: MessageContext<'a, 'b, 'c>,
+        mut context: MessageContext<'a, 'b, 'c, Payload>,
     ) -> anyhow::Result<()> {
         match message.body.payload {
             Payload::Init(init) => {

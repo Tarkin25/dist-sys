@@ -15,20 +15,20 @@ enum Payload {
 
 impl Handle<Payload> for UniqueIds {
     fn handle<'a, 'b, 'c>(
-            &mut self,
-            message: Message<Payload>,
-            mut context: MessageContext<'a, 'b, 'c>,
-        ) -> anyhow::Result<()> {
+        &mut self,
+        message: Message<Payload>,
+        mut context: MessageContext<'a, 'b, 'c, Payload>,
+    ) -> anyhow::Result<()> {
         match message.body.payload {
             Payload::Init(init) => {
                 context.initialize(init);
                 context.reply(Payload::InitOk)
-            },
+            }
             Payload::Generate => {
                 let id = format!("{}-{}", &context.init()?.node_id, context.message_id());
                 context.reply(Payload::GenerateOk { id })
-            },
-            _ => Ok(())
+            }
+            _ => Ok(()),
         }
     }
 }

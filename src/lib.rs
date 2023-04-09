@@ -1,6 +1,9 @@
 use anyhow::{anyhow, Context};
 use serde::{Deserialize, Serialize};
-use std::io::{StdoutLock, Write};
+use std::{
+    io::{StdoutLock, Write},
+    marker::PhantomData,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message<Payload> {
@@ -30,11 +33,12 @@ pub struct Node {
     init: Option<Init>,
 }
 
-pub struct MessageContext<'a, 'b, 'c> {
+pub struct MessageContext<'a, 'b, 'c, Payload> {
     node: &'a mut Node,
     stdout: &'b mut StdoutLock<'c>,
     src: String,
     in_reply_to: Option<usize>,
+    payload: PhantomData<Payload>,
 }
 
 impl Default for Node {
@@ -46,24 +50,21 @@ impl Default for Node {
     }
 }
 
-impl<'a, 'b, 'c> MessageContext<'a, 'b, 'c> {
-    fn new<Payload>(
-        node: &'a mut Node,
-        stdout: &'b mut StdoutLock<'c>,
-        message: &Message<Payload>,
-    ) -> Self {
+impl<'a, 'b, 'c, Payload> MessageContext<'a, 'b, 'c, Payload>
+where
+    Payload: Serialize,
+{
+    fn new(node: &'a mut Node, stdout: &'b mut StdoutLock<'c>, message: &Message<Payload>) -> Self {
         Self {
             node,
             stdout,
             src: message.src.clone(),
             in_reply_to: message.body.id.clone(),
+            payload: PhantomData,
         }
     }
 
-    pub fn reply<Payload>(&mut self, payload: Payload) -> anyhow::Result<()>
-    where
-        Payload: Serialize,
-    {
+    pub fn reply(&mut self, payload: Payload) -> anyhow::Result<()> {
         let reply = Message {
             src: self.init()?.node_id.clone(),
             dst: self.src.clone(),
@@ -74,7 +75,25 @@ impl<'a, 'b, 'c> MessageContext<'a, 'b, 'c> {
             },
         };
 
-        serde_json::to_writer(&mut *self.stdout, &reply)
+        self.send_message(reply)
+    }
+
+    pub fn send(&mut self, dst: String, payload: Payload) -> anyhow::Result<()> {
+        let message = Message {
+            src: self.init()?.node_id.clone(),
+            dst,
+            body: Body {
+                id: Some(self.next_id()),
+                in_reply_to: None,
+                payload,
+            },
+        };
+
+        self.send_message(message)
+    }
+
+    fn send_message(&mut self, message: Message<Payload>) -> anyhow::Result<()> {
+        serde_json::to_writer(&mut *self.stdout, &message)
             .context("Failed to serialize output message to stdout")?;
         writeln!(&mut *self.stdout, "").context("Failed to write newline to stdout")?;
 
@@ -110,7 +129,7 @@ where
     fn handle<'a, 'b, 'c>(
         &mut self,
         message: Message<Payload>,
-        context: MessageContext<'a, 'b, 'c>,
+        context: MessageContext<'a, 'b, 'c, Payload>,
     ) -> anyhow::Result<()>;
 
     fn run(&mut self) -> anyhow::Result<()> {
