@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     io::{StdoutLock, Write},
     marker::PhantomData,
+    sync::mpsc::Sender,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,52 +149,54 @@ where
 
         Ok(())
     }
-}
 
-/* trait NodeInternal<Payload>: Node<Payload>
-where
-    Payload: Serialize + for<'a> Deserialize<'a>,
-{
-    fn handle_internal(
+    fn run_with_generator(
         &mut self,
-        message: Message<Payload>,
-        stdout: &mut StdoutLock,
-    ) -> anyhow::Result<()> {
-        let dst = message.src.clone();
-        let in_reply_to = message.body.id.clone();
+        generator: impl Fn(Sender<Message<Payload>>) -> anyhow::Result<()> + Send + Sync + 'static,
+    ) -> anyhow::Result<()>
+    where
+        Payload: Send + 'static,
+    {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut stdout = std::io::stdout().lock();
+        let mut node = Node::default();
 
-        let payloads = if let Payload::Init { node_id, .. } = message.body.payload {
-            *self.node_id_mut() = Some(node_id);
-            vec![Payload::InitOk]
-        } else {
-            self.handle(message)
-                .context("Error while handling a message")?
+        let read_stdin_handle = {
+            let tx = tx.clone();
+
+            std::thread::spawn(move || {
+                let stdin = std::io::stdin().lock();
+                let inputs =
+                    serde_json::Deserializer::from_reader(stdin).into_iter::<Message<Payload>>();
+
+                for input in inputs {
+                    let message = input.context("Maelstrom input could not be deserialized")?;
+                    if let Err(_) = tx.send(message) {
+                        return Ok::<_, anyhow::Error>(());
+                    }
+                }
+
+                Ok(())
+            })
         };
 
-        for payload in payloads {
-            let message = Message {
-                src: self.node_id()?.to_string(),
-                dst: dst.clone(),
-                body: Body {
-                    id: Some(self.next_id()),
-                    in_reply_to,
-                    payload,
-                },
-            };
+        let generator_handle = std::thread::spawn(move || generator(tx));
 
-            serde_json::to_writer(&mut *stdout, &message)
-                .context("Failed to serialze output message to stdout")?;
-            writeln!(&mut *stdout, "").context("Failed to write newline to stdout")?;
+        for message in rx {
+            let context = MessageContext::new(&mut node, &mut stdout, &message);
+            self.handle(message, context)
+                .context("An error ocurred while handling a message")?;
         }
+
+        read_stdin_handle
+            .join()
+            .expect("read-input thread panicked")
+            .context("read-input thread errorred")?;
+        generator_handle
+            .join()
+            .expect("generator thread panicked")
+            .context("generator thread errorred")?;
 
         Ok(())
     }
-
-    fn next_id(&mut self) -> usize {
-        let id = *self.current_id();
-        *self.current_id() += 1;
-        id
-    }
 }
-
-impl<T, Payload> NodeInternal<Payload> for T where T: Node<Payload> + ?Sized {} */

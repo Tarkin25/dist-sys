@@ -1,6 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 
-use anyhow::anyhow;
 use dist_sys::*;
 use serde::{Deserialize, Serialize};
 
@@ -18,15 +20,15 @@ enum Payload {
     ReadOk { messages: Vec<usize> },
     Topology { topology: Topology },
     TopologyOk,
+    InitiateGossip,
+    Gossip { messages: HashSet<usize> },
+    GossipOk { messages: HashSet<usize> },
 }
 
 #[derive(Default)]
 struct Broadcast {
-    topology: Option<Topology>,
-    /// key: message value
-    /// <br/>
-    /// value: set containing all neighboring nodes the message has already been broadcasted to
-    messages: HashMap<usize, HashSet<String>>,
+    neighbors: Option<Vec<String>>,
+    messages: HashSet<usize>,
 }
 
 impl Handle<Payload> for Broadcast {
@@ -40,45 +42,62 @@ impl Handle<Payload> for Broadcast {
                 context.initialize(init);
                 context.reply(Payload::InitOk)
             }
-            Payload::Topology { topology } => {
-                self.topology = Some(topology);
+            Payload::Topology { mut topology } => {
+                self.neighbors = topology.remove(&context.init()?.node_id);
                 context.reply(Payload::TopologyOk)
             }
-            Payload::Broadcast {
-                message: message_number,
-            } => {
-                let notified_neighbors = self.messages.entry(message_number).or_default();
-                let topology = self
-                    .topology
-                    .as_ref()
-                    .ok_or(anyhow!("topology not initialized"))?;
-                let node_id = &context.init()?.node_id;
-                let neighbors = &topology[node_id];
-
-                notified_neighbors.insert(message.src.clone());
-
-                for neighbor in neighbors {
-                    if !notified_neighbors.contains(neighbor) {
-                        context.send(
-                            neighbor.clone(),
-                            Payload::Broadcast {
-                                message: message_number,
-                            },
-                        )?;
-                        notified_neighbors.insert(neighbor.clone());
-                    }
-                }
-
+            Payload::Broadcast { message } => {
+                self.messages.insert(message);
                 context.reply(Payload::BroadcastOk)
             }
             Payload::Read => context.reply(Payload::ReadOk {
-                messages: self.messages.keys().copied().collect(),
+                messages: self.messages.iter().copied().collect(),
             }),
+            Payload::InitiateGossip => {
+                if let Some(neighbors) = self.neighbors.as_ref() {
+                    for neighbor in neighbors {
+                        context.send(
+                            neighbor.clone(),
+                            Payload::Gossip {
+                                messages: self.messages.clone(),
+                            },
+                        )?;
+                    }
+                }
+
+                Ok(())
+            }
+            Payload::Gossip { messages } => {
+                self.messages.extend(messages);
+                context.reply(Payload::GossipOk {
+                    messages: self.messages.clone(),
+                })
+            }
+            Payload::GossipOk { messages } => {
+                self.messages.extend(messages);
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
 }
 
 fn main() -> anyhow::Result<()> {
-    Broadcast::default().run()
+    Broadcast::default().run_with_generator(|sender| loop {
+        let message = Message {
+            dst: "internal".into(),
+            src: "internal".into(),
+            body: Body {
+                id: None,
+                in_reply_to: None,
+                payload: Payload::InitiateGossip,
+            },
+        };
+
+        if let Err(_) = sender.send(message) {
+            return Ok(());
+        }
+
+        std::thread::sleep(Duration::from_millis(500));
+    })
 }
